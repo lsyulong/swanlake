@@ -197,7 +197,7 @@ mod tests {
      let root_path = format!("{prefix}/");
      let json_path = format!("{prefix}/status.json");
      assert_eq!(root_path,"/admin/");
-     assert_eq!(json_path,"admin/status.json");
+     assert_eq!(json_path,"/admin/status.json");
 
      Ok(())
    }    
