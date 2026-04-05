@@ -100,7 +100,7 @@ const STATUS_PAGE: &str = include_str!("status.html");
 mod tests {
     use std::sync::Arc;
 
-    use anyhow::{anyhow, Result};
+    use anyhow::{Ok, Result, anyhow};
     use axum::extract::State;
 
     use super::*;
@@ -177,4 +177,58 @@ mod tests {
             .contains("invalid status server bind address"));
         Ok(())
     }
+
+    #[tokio::test]
+   async  fn status_with_custom_prefix() ->Result<()>{
+     let config  =ServerConfig{
+        status_enabled:true,
+        status_path_prefix:"/admin".to_string(),
+        status_host:"0.0.0.0".to_string(),
+        status_port:0,
+        ..ServerConfig::default()
+     };
+     let metrics = Arc::new(Metrics::new(32,8));
+     let registry = build_registry(2, 60);
+     // Test that routes are properly configured with prefix 
+     let prefix = normalize_prefix(&config.status_path_prefix);
+     assert_eq!(prefix,"/admin");
+
+     // Verify root and json paths  
+     let root_path = format!("{prefix}/");
+     let json_path = format!("{prefix}/status.json");
+     assert_eq!(root_path,"/admin/");
+     assert_eq!(json_path,"admin/status.json");
+
+     Ok(())
+   }    
+   #[test]
+   fn status_server_config_changes() -> Result<()>{
+    // Test with disabled status server  
+    let config_disabled = ServerConfig{
+        status_enabled:false,
+        ..ServerConfig::default()
+    };
+
+    let metrics = Arc::new(Metrics::new(32,8));
+    let registry = build_registry(2, 60)?;
+
+    //should return early without error when disabled
+    spawn_status_server(&config_disabled, metrics.clone(), registry.clone())?;
+
+    // Test with enabled but invalid config 
+    let config_invalid = ServerConfig{
+        status_enabled:true,
+        status_host:"invalid-host".to_string(),
+        status_port:9999,
+        ..ServerConfig::default()
+
+    };
+
+    // Should return error for invalid bind address  
+    let result = spawn_status_server(&config_invalid, metrics, registry);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("invalid status server bind address"));
+
+    Ok(())
+   }
 }
