@@ -110,7 +110,7 @@ mod tests {
     use axum::extract::State;
 
     use super::*;
-    use swanlake_core::engine::EngineFactory;
+    use swanlake_core::{engine::EngineFactory, session::SessionId};
 
     fn build_registry(max_sessions: usize, timeout_secs: u64) -> Result<Arc<SessionRegistry>> {
         let config = ServerConfig {
@@ -242,14 +242,18 @@ mod tests {
     let registry = build_registry(7, 600)?;
     let state = StatusState { metrics, registry }; 
     
+    //create session to test non-zero values
+    let session_id = SessionId::from_string("test".to_string());
+    let _session = state.registry.get_or_create_by_id(&session_id).await?;
+
     let Json(payload) = status_json(State(state)).await;
 
     // Validate session fields  
-    assert!(payload.sessions.total_sessions >= 0);  
-    assert!(payload.sessions.max_sessions > 0);  
-    assert!(payload.sessions.session_timeout_seconds > 0);  
-    assert!(payload.sessions.oldest_idle_ms >= 0);  
-    assert!(payload.sessions.average_idle_ms >= 0);  
+    assert_eq!(payload.sessions.total_sessions, 1);  
+    assert_eq!(payload.sessions.max_sessions ,7);  
+    assert_eq!(payload.sessions.session_timeout_seconds,600);  
+    assert!(payload.sessions.oldest_idle_ms <1000);  
+    assert!(payload.sessions.average_idle_ms <1000);  
 
     Ok(())
    }
