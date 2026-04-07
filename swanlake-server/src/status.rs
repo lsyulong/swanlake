@@ -235,4 +235,22 @@ mod tests {
 
     Ok(())
    }
+
+   #[tokio::test]
+   async fn status_json_includes_all_session_fields() -> Result<()>{
+    let metrics = Arc::new(Metrics::new(128,32));
+    let registry = build_registry(7, 600)?;
+    let state = StatusState { metrics, registry }; 
+    
+    let Json(payload) = status_json(State(state)).await;
+
+    // Validate session fields  
+    assert!(payload.sessions.total_sessions >= 0);  
+    assert!(payload.sessions.max_sessions > 0);  
+    assert!(payload.sessions.session_timeout_seconds > 0);  
+    assert!(payload.sessions.oldest_idle_ms >= 0);  
+    assert!(payload.sessions.average_idle_ms >= 0);  
+
+    Ok(())
+   }
 }
