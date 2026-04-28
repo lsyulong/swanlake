@@ -614,7 +614,7 @@ impl<'a> PreparedStatementTester<'a> {
             self.update("CREATE TABLE null_empty_test (id INTEGER, name VARCHAR, value INTEGER)")?;
 
             //test null parameter
-            let null_schema = Arc::new(Schema::new(vec![Field::new(id, DataType::Int32, false),
+            let null_schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false),
             Field::new("name", DataType::Utf8, true),
             Field::new("value", DataType::Int32, true),
             ]));
