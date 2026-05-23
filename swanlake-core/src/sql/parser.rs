@@ -546,4 +546,251 @@ mod tests {
         let shape = parsed.insert_values_shape().expect("should infer shape");
         assert_eq!(shape, (2, 2));
     }
+
+    //parameter_columns: IN (?, ?)
+
+    #[test]
+    fn test_parameter_columns_in_list() {
+        let sql = "SELECT * FROM usertable WHERE ycsb_key IN (?, ?, ?)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key", "ycsb_key", "ycsb_key"]);
+    }
+
+    #[test]
+    fn test_parameter_columns_in_list_single() {
+        let sql = "SELECT * FROM usertable WHERE ycsb_key IN (?)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key"]);
+    }
+
+    //parameter_columns: nested conditions
+
+    #[test]
+    fn test_parameter_columns_nested_and() {
+        let sql = "SELECT * FROM usertable WHERE (ycsb_key = ?) AND (field1 = ?)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key", "field1"]);
+    }
+
+    #[test]
+    fn test_parameter_columns_or_condition() {
+        let sql = "SELECT * FROM usertable WHERE a = ? OR b = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["a", "b"]);
+    }
+
+    //parameter_columns: CAST
+
+    #[test]
+    fn test_parameter_columns_cast() {
+        let sql = "SELECT * FROM usertable WHERE ycsb_key = CAST(? AS INTEGER)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key"]);
+    }
+
+    //parameter_columns: multiple placeholder types
+
+    #[test]
+    fn test_parameter_columns_dollar_placeholders() {
+        let sql = "SELECT * FROM usertable WHERE ycsb_key = $1 AND field1 = $2";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key", "field1"]);
+    }
+
+    #[test]
+    fn test_parameter_columns_mixed_placeholders() {
+        let sql = "SELECT * FROM usertable WHERE ycsb_key = $1 AND field1 = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key", "field1"]);
+    }
+
+    //parameter_columns: DELETE
+
+    #[test]
+    fn test_parameter_columns_delete() {
+        let sql = "DELETE FROM usertable WHERE ycsb_key = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key"]);
+    }
+
+    #[test]
+    fn test_parameter_columns_delete_multi_param() {
+        let sql = "DELETE FROM usertable WHERE ycsb_key = ? AND field1 = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.parameter_columns().expect("should infer columns");
+        assert_eq!(cols, vec!["ycsb_key", "field1"]);
+    }
+
+    //get_statement_table: schema-qualified forms
+
+    #[test]
+    fn test_statement_table_select_schema_qualified() {
+        let sql = "SELECT * FROM public.usertable WHERE ycsb_key = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let table_ref = parsed.get_statement_table().expect("should have table");
+        assert_eq!(table_ref.parts(), &["public", "usertable"]);
+    }
+
+    #[test]
+    fn test_statement_table_update_schema_qualified() {
+        let sql = "UPDATE public.usertable SET field1 = ? WHERE ycsb_key = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let table_ref = parsed.get_statement_table().expect("should have table");
+        assert_eq!(table_ref.parts(), &["public", "usertable"]);
+    }
+
+    #[test]
+    fn test_statement_table_delete_schema_qualified() {
+        let sql = "DELETE FROM public.usertable WHERE ycsb_key = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let table_ref = parsed.get_statement_table().expect("should have table");
+        assert_eq!(table_ref.parts(), &["public", "usertable"]);
+    }
+
+    #[test]
+    fn test_statement_table_simple_update() {
+        let sql = "UPDATE usertable SET field1 = ? WHERE ycsb_key = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let table_ref = parsed.get_statement_table().expect("should have table");
+        assert_eq!(table_ref.parts(), &["usertable"]);
+    }
+
+    #[test]
+    fn test_statement_table_simple_delete() {
+        let sql = "DELETE FROM usertable WHERE ycsb_key = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let table_ref = parsed.get_statement_table().expect("should have table");
+        assert_eq!(table_ref.parts(), &["usertable"]);
+    }
+
+    //insert_values_all_placeholders
+
+    #[test]
+    fn test_insert_values_all_placeholders_true() {
+        let sql = "INSERT INTO users (id, name) VALUES (?, ?)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        assert!(parsed.insert_values_all_placeholders());
+    }
+
+    #[test]
+    fn test_insert_values_all_placeholders_multi_row() {
+        let sql = "INSERT INTO users (id, name) VALUES (?, ?), (?, ?)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        assert!(parsed.insert_values_all_placeholders());
+    }
+
+    #[test]
+    fn test_insert_values_all_placeholders_false_with_literals() {
+        let sql = "INSERT INTO users (id, name) VALUES (?, 'Alice')";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        assert!(!parsed.insert_values_all_placeholders());
+    }
+
+    #[test]
+    fn test_insert_values_all_placeholders_false_select() {
+        let sql = "INSERT INTO users SELECT * FROM temp_users";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        assert!(!parsed.insert_values_all_placeholders());
+    }
+
+    #[test]
+    fn test_insert_values_all_placeholders_false_no_source() {
+        let sql = "INSERT INTO users DEFAULT VALUES";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        assert!(!parsed.insert_values_all_placeholders());
+    }
+
+    //parameter_columns: unsupported / edge-case patterns
+    //
+    // These document patterns where parameter_columns returns None because
+    // the parser cannot reliably map placeholders to column names.
+
+    /// CASE WHEN expressions: the placeholder is inside a CASE branch,
+    /// not directly associated with a column reference.
+    #[test]
+    fn test_parameter_columns_unsupported_case_when() {
+        let sql = "SELECT * FROM usertable WHERE CASE WHEN a > ? THEN 1 ELSE 0 END = 1";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        // Currently returns None because the placeholder is not in a
+        // simple `col = ?` pattern.
+        assert!(parsed.parameter_columns().is_none());
+    }
+
+    /// Function calls: the placeholder is inside a function argument,
+    /// so `collect_params_from_expr` cannot map it to a column.
+    #[test]
+    fn test_parameter_columns_unsupported_function_arg() {
+        let sql = "SELECT * FROM usertable WHERE UPPER(name) = ?";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        // Currently returns None — the left side is a Function, not an
+        // Identifier, so column_name returns None.
+        assert!(parsed.parameter_columns().is_none());
+    }
+
+    /// IS NULL in a BinaryOp: this is a BinaryOp (op = Is) with a Null
+    /// rhs, not a Placeholder — parameter_columns correctly returns None
+    /// because there are no placeholders.
+    #[test]
+    fn test_parameter_columns_no_params_is_null() {
+        let sql = "SELECT * FROM usertable WHERE field1 IS NULL";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        assert!(parsed.parameter_columns().is_none());
+    }
+
+    // is_query: statement type checks
+
+    #[test]
+    fn test_is_query_select() {
+        let parsed = ParsedStatement::parse("SELECT * FROM usertable").expect("should parse");
+        assert!(parsed.is_query());
+    }
+
+    #[test]
+    fn test_is_query_delete() {
+        let parsed = ParsedStatement::parse("DELETE FROM usertable WHERE ycsb_key = ?")
+            .expect("should parse");
+        assert!(!parsed.is_query());
+    }
+
+    #[test]
+    fn test_is_query_update() {
+        let parsed =
+            ParsedStatement::parse("UPDATE usertable SET a = ? WHERE b = ?").expect("should parse");
+        assert!(!parsed.is_query());
+    }
+
+    //get_insert_columns
+
+    #[test]
+    fn test_get_insert_columns_with_columns() {
+        let sql = "INSERT INTO users (id, name, email) VALUES (?, ?, ?)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let cols = parsed.get_insert_columns().expect("should have columns");
+        assert_eq!(cols, vec!["id", "name", "email"]);
+    }
+
+    #[test]
+    fn test_get_insert_columns_none_without_columns() {
+        let sql = "INSERT INTO users VALUES (?, ?, ?)";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        assert!(parsed.get_insert_columns().is_none());
+    }
+
+    //insert_source_sql
+
+    #[test]
+    fn test_insert_source_sql_values() {
+        let sql = "INSERT INTO users (id, name) VALUES (1, 'Alice')";
+        let parsed = ParsedStatement::parse(sql).expect("should parse");
+        let source = parsed.insert_source_sql().expect("should have source");
+        assert!(source.contains("VALUES"));
+    }
 }
