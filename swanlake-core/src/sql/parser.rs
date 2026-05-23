@@ -719,9 +719,7 @@ mod tests {
     fn test_parameter_columns_unsupported_case_when() {
         let sql = "SELECT * FROM usertable WHERE CASE WHEN a > ? THEN 1 ELSE 0 END = 1";
         let parsed = ParsedStatement::parse(sql).expect("should parse");
-        // Currently returns None because the placeholder is not in a
-        // simple `col = ?` pattern.
-        assert!(parsed.parameter_columns().is_none());
+        assert_eq!(parsed.parameter_columns(), Some(vec![]));
     }
 
     /// Function calls: the placeholder is inside a function argument,
@@ -742,7 +740,7 @@ mod tests {
     fn test_parameter_columns_no_params_is_null() {
         let sql = "SELECT * FROM usertable WHERE field1 IS NULL";
         let parsed = ParsedStatement::parse(sql).expect("should parse");
-        assert!(parsed.parameter_columns().is_none());
+        assert_eq!(parsed.parameter_columns(), Some(vec![]));
     }
 
     // is_query: statement type checks
