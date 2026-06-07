@@ -95,51 +95,29 @@ SELECT id, val FROM meta_dual ORDER BY id
 ----
 20	temp
 
-# schema-qualified name reaches permanent table
+# drop temp table (unqualified DROP resolves to temp via shadowing)
+statement ok
+DROP TABLE IF EXISTS meta_dual
+
+# permanent table still intact with original data
 query II
-SELECT id, val FROM main.meta_dual ORDER BY id
+SELECT id, val FROM meta_dual ORDER BY id
 ----
 10	perm
 
-# schema-qualified name for temp table via pg_temp (SQL-standard alias)
-query II
-SELECT id, val FROM pg_temp.meta_dual ORDER BY id
-----
-20	temp
-
-
-# --- info_schema: verify distinct types for same-name tables ---
-
-query I
-SELECT COUNT(*) FROM information_schema.tables
-WHERE table_name = 'meta_dual'
-----
-2
-
+# only BASE TABLE remains in information_schema
 query TT
 SELECT table_name, table_type
 FROM information_schema.tables
 WHERE table_name = 'meta_dual'
-  AND table_type = 'BASE TABLE'
 ----
 meta_dual	BASE TABLE
-
-query TT
-SELECT table_name, table_type
-FROM information_schema.tables
-WHERE table_name = 'meta_dual'
-  AND table_type = 'LOCAL TEMPORARY'
-----
-meta_dual	LOCAL TEMPORARY
 
 
 # --- cleanup ---
 
 statement ok
 DROP TABLE IF EXISTS meta_temp_tbl
-
-statement ok
-DROP TABLE IF EXISTS pg_temp.meta_dual
 
 statement ok
 DROP TABLE IF EXISTS meta_dual

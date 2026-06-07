@@ -130,13 +130,24 @@ INSERT INTO s1.cross_name VALUES ('s1')
 
 # both visible in information_schema
 query TT
-SELECT table_schema, source FROM main.cross_name
-UNION ALL
-SELECT table_schema, source FROM s1.cross_name
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_name = 'cross_name'
 ORDER BY table_schema
 ----
-main	main
-s1	s1
+main	cross_name
+s1	cross_name
+
+# data accessible via schema-qualified names
+query T
+SELECT source FROM main.cross_name
+----
+main
+
+query T
+SELECT source FROM s1.cross_name
+----
+s1
 
 
 # --- quoted identifiers with SQL keywords ---
