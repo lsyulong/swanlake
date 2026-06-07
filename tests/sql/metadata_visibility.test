@@ -31,3 +31,107 @@ DROP VIEW metadata_sql_view
 
 statement ok
 DROP TABLE metadata_sql_table
+
+
+# --- temp table visibility ---
+
+statement ok
+DROP TABLE IF EXISTS meta_temp_tbl
+
+statement ok
+CREATE TEMP TABLE meta_temp_tbl (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO meta_temp_tbl VALUES (1, 'temp_one'), (2, 'temp_two')
+
+query II
+SELECT id, val FROM meta_temp_tbl ORDER BY id
+----
+1	temp_one
+2	temp_two
+
+# temp table should appear in information_schema with type LOCAL TEMPORARY
+query TTT
+SELECT table_schema, table_name, table_type
+FROM information_schema.tables
+WHERE table_name = 'meta_temp_tbl'
+ORDER BY table_schema
+----
+temp	meta_temp_tbl	LOCAL TEMPORARY
+
+
+# --- same-name temp and permanent tables ---
+
+statement ok
+DROP TABLE IF EXISTS meta_dual
+
+statement ok
+CREATE TABLE meta_dual (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO meta_dual VALUES (10, 'perm')
+
+statement ok
+CREATE TEMP TABLE meta_dual (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO meta_dual VALUES (20, 'temp')
+
+# both temp and permanent should appear in information_schema
+query TTT
+SELECT table_schema, table_name, table_type
+FROM information_schema.tables
+WHERE table_name = 'meta_dual'
+ORDER BY table_schema
+----
+main	meta_dual	BASE TABLE
+temp	meta_dual	LOCAL TEMPORARY
+
+# unqualified SELECT resolves to temp (shadows permanent)
+query II
+SELECT id, val FROM meta_dual ORDER BY id
+----
+20	temp
+
+# schema-qualified name reaches permanent table
+query II
+SELECT id, val FROM main.meta_dual ORDER BY id
+----
+10	perm
+
+# schema-qualified name for temp table
+query II
+SELECT id, val FROM temp.meta_dual ORDER BY id
+----
+20	temp
+
+
+# --- information_schema filtering by schema ---
+
+query TTT
+SELECT table_schema, table_name, table_type
+FROM information_schema.tables
+WHERE table_schema = 'main'
+  AND table_name = 'meta_dual'
+----
+main	meta_dual	BASE TABLE
+
+query TTT
+SELECT table_schema, table_name, table_type
+FROM information_schema.tables
+WHERE table_schema = 'temp'
+  AND table_name = 'meta_dual'
+----
+temp	meta_dual	LOCAL TEMPORARY
+
+
+# --- cleanup ---
+
+statement ok
+DROP TABLE IF EXISTS meta_temp_tbl
+
+statement ok
+DROP TABLE IF EXISTS temp.meta_dual
+
+statement ok
+DROP TABLE IF EXISTS meta_dual
