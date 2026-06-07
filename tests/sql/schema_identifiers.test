@@ -48,9 +48,13 @@ SELECT id, value FROM s1."MyTable" ORDER BY id
 10	hello
 20	world
 
-# unquoted mytable refers to a different (nonexistent) table
-statement error
-SELECT * FROM s1.mytable
+# DuckDB matches unquoted identifiers case-insensitively:
+# s1.mytable resolves to s1."MyTable" (same table)
+query II
+SELECT id, value FROM s1.mytable ORDER BY id
+----
+10	hello
+20	world
 
 
 # --- case-sensitive column names across schemas ---
@@ -100,10 +104,12 @@ SELECT n FROM "S2".data
 
 # --- cross-schema query: join tables from different schemas ---
 
+# reference columns by table-name qualifier (widely compatible) rather than
+# schema.table.column, while still joining tables that live in different schemas
 query III
-SELECT s1.tbl.id, s1.tbl.name, "S2".data.n
+SELECT tbl.id, tbl.name, data.n
 FROM s1.tbl, "S2".data
-WHERE s1.tbl.id = 1
+WHERE tbl.id = 1
 ----
 1	alpha	100
 

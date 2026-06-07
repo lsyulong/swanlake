@@ -50,16 +50,17 @@ SELECT id, val FROM meta_temp_tbl ORDER BY id
 1	temp_one
 2	temp_two
 
-# temp table should appear in information_schema with type LOCAL TEMPORARY
-# (table_schema varies by DuckDB version: 'temp' or 'main'; check table_type only)
-query TT
-SELECT table_name, table_type
+# temp table should appear in information_schema with type LOCAL TEMPORARY.
+# table_schema is version-dependent ('temp' in newer DuckDB, 'main' in older),
+# so assert it is one of the known values instead of hard-coding which one.
+query TTT
+SELECT table_name, table_type, table_schema IN ('temp', 'main') AS schema_ok
 FROM information_schema.tables
 WHERE table_name = 'meta_temp_tbl'
   AND table_type = 'LOCAL TEMPORARY'
 ORDER BY table_name
 ----
-meta_temp_tbl	LOCAL TEMPORARY
+meta_temp_tbl	LOCAL TEMPORARY	true
 
 
 # --- same-name temp and permanent tables ---
