@@ -51,13 +51,15 @@ SELECT id, val FROM meta_temp_tbl ORDER BY id
 2	temp_two
 
 # temp table should appear in information_schema with type LOCAL TEMPORARY
-query TTT
-SELECT table_schema, table_name, table_type
+# (table_schema varies by DuckDB version: 'temp' or 'main'; check table_type only)
+query TT
+SELECT table_name, table_type
 FROM information_schema.tables
 WHERE table_name = 'meta_temp_tbl'
-ORDER BY table_schema
+  AND table_type = 'LOCAL TEMPORARY'
+ORDER BY table_name
 ----
-temp	meta_temp_tbl	LOCAL TEMPORARY
+meta_temp_tbl	LOCAL TEMPORARY
 
 
 # --- same-name temp and permanent tables ---
@@ -78,14 +80,14 @@ statement ok
 INSERT INTO meta_dual VALUES (20, 'temp')
 
 # both temp and permanent should appear in information_schema
-query TTT
-SELECT table_schema, table_name, table_type
+query TT
+SELECT table_name, table_type
 FROM information_schema.tables
 WHERE table_name = 'meta_dual'
-ORDER BY table_schema
+ORDER BY table_type
 ----
-main	meta_dual	BASE TABLE
-temp	meta_dual	LOCAL TEMPORARY
+meta_dual	BASE TABLE
+meta_dual	LOCAL TEMPORARY
 
 # unqualified SELECT resolves to temp (shadows permanent)
 query II
@@ -99,30 +101,36 @@ SELECT id, val FROM main.meta_dual ORDER BY id
 ----
 10	perm
 
-# schema-qualified name for temp table
+# schema-qualified name for temp table via pg_temp (SQL-standard alias)
 query II
-SELECT id, val FROM temp.meta_dual ORDER BY id
+SELECT id, val FROM pg_temp.meta_dual ORDER BY id
 ----
 20	temp
 
 
-# --- information_schema filtering by schema ---
+# --- info_schema: verify distinct types for same-name tables ---
 
-query TTT
-SELECT table_schema, table_name, table_type
-FROM information_schema.tables
-WHERE table_schema = 'main'
-  AND table_name = 'meta_dual'
+query I
+SELECT COUNT(*) FROM information_schema.tables
+WHERE table_name = 'meta_dual'
 ----
-main	meta_dual	BASE TABLE
+2
 
-query TTT
-SELECT table_schema, table_name, table_type
+query TT
+SELECT table_name, table_type
 FROM information_schema.tables
-WHERE table_schema = 'temp'
-  AND table_name = 'meta_dual'
+WHERE table_name = 'meta_dual'
+  AND table_type = 'BASE TABLE'
 ----
-temp	meta_dual	LOCAL TEMPORARY
+meta_dual	BASE TABLE
+
+query TT
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_name = 'meta_dual'
+  AND table_type = 'LOCAL TEMPORARY'
+----
+meta_dual	LOCAL TEMPORARY
 
 
 # --- cleanup ---
@@ -131,7 +139,7 @@ statement ok
 DROP TABLE IF EXISTS meta_temp_tbl
 
 statement ok
-DROP TABLE IF EXISTS temp.meta_dual
+DROP TABLE IF EXISTS pg_temp.meta_dual
 
 statement ok
 DROP TABLE IF EXISTS meta_dual
