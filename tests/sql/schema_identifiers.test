@@ -1,0 +1,224 @@
+# name: tests/sql/schema_identifiers.test
+# description: verify schema-qualified names, case-sensitive identifiers, and cross-schema visibility
+# group: [sql]
+
+
+# --- create schemas ---
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS s1
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS "S2"
+
+
+# --- tables in custom schemas ---
+
+statement ok
+DROP TABLE IF EXISTS s1.tbl
+
+statement ok
+CREATE TABLE s1.tbl (id INTEGER, name VARCHAR)
+
+statement ok
+INSERT INTO s1.tbl VALUES (1, 'alpha'), (2, 'beta')
+
+query II
+SELECT id, name FROM s1.tbl ORDER BY id
+----
+1	alpha
+2	beta
+
+
+# --- case-sensitive table name in custom schema ---
+
+statement ok
+DROP TABLE IF EXISTS s1."MyTable"
+
+statement ok
+CREATE TABLE s1."MyTable" (id INTEGER, value VARCHAR)
+
+statement ok
+INSERT INTO s1."MyTable" VALUES (10, 'hello'), (20, 'world')
+
+# must use quoted name for case-sensitive table
+query II
+SELECT id, value FROM s1."MyTable" ORDER BY id
+----
+10	hello
+20	world
+
+# DuckDB matches unquoted identifiers case-insensitively:
+# s1.mytable resolves to s1."MyTable" (same table)
+query II
+SELECT id, value FROM s1.mytable ORDER BY id
+----
+10	hello
+20	world
+
+
+# --- case-sensitive column names across schemas ---
+
+statement ok
+DROP TABLE IF EXISTS main."CaseColumns"
+
+statement ok
+CREATE TABLE main."CaseColumns" ("ColOne" INTEGER, "Col Two" VARCHAR)
+
+statement ok
+INSERT INTO main."CaseColumns" ("ColOne", "Col Two") VALUES (42, 'spaced col')
+
+query IT
+SELECT "ColOne", "Col Two" FROM main."CaseColumns"
+----
+42	spaced col
+
+# verify via information_schema
+query TTT
+SELECT table_schema, table_name, table_type
+FROM information_schema.tables
+WHERE table_name IN ('tbl', 'MyTable', 'CaseColumns')
+ORDER BY table_schema, table_name
+----
+main	CaseColumns	BASE TABLE
+s1	MyTable	BASE TABLE
+s1	tbl	BASE TABLE
+
+
+# --- schema-qualified table in S2 (case-sensitive schema) ---
+
+statement ok
+DROP TABLE IF EXISTS "S2".data
+
+statement ok
+CREATE TABLE "S2".data (n INTEGER)
+
+statement ok
+INSERT INTO "S2".data VALUES (100)
+
+query I
+SELECT n FROM "S2".data
+----
+100
+
+
+# --- cross-schema query: join tables from different schemas ---
+
+# reference columns by table-name qualifier (widely compatible) rather than
+# schema.table.column, while still joining tables that live in different schemas
+query III
+SELECT tbl.id, tbl.name, data.n
+FROM s1.tbl, "S2".data
+WHERE tbl.id = 1
+----
+1	alpha	100
+
+
+# --- table with same name in different schemas ---
+
+statement ok
+DROP TABLE IF EXISTS main.cross_name
+
+statement ok
+DROP TABLE IF EXISTS s1.cross_name
+
+statement ok
+CREATE TABLE main.cross_name (source VARCHAR)
+
+statement ok
+INSERT INTO main.cross_name VALUES ('main')
+
+statement ok
+CREATE TABLE s1.cross_name (source VARCHAR)
+
+statement ok
+INSERT INTO s1.cross_name VALUES ('s1')
+
+# both visible in information_schema
+query TT
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_name = 'cross_name'
+ORDER BY table_schema
+----
+main	cross_name
+s1	cross_name
+
+# data accessible via schema-qualified names
+query T
+SELECT source FROM main.cross_name
+----
+main
+
+query T
+SELECT source FROM s1.cross_name
+----
+s1
+
+
+# --- quoted identifiers with SQL keywords ---
+
+statement ok
+DROP TABLE IF EXISTS main."select"
+
+statement ok
+CREATE TABLE main."select" ("from" INTEGER, "where" VARCHAR)
+
+statement ok
+INSERT INTO main."select" ("from", "where") VALUES (1, 'keyword')
+
+query IT
+SELECT "from", "where" FROM main."select"
+----
+1	keyword
+
+statement ok
+DROP TABLE main."select"
+
+
+# --- case-insensitive name collision test ---
+
+statement ok
+DROP TABLE IF EXISTS main.lookup
+
+statement ok
+CREATE TABLE main.lookup (id INTEGER)
+
+statement ok
+INSERT INTO main.lookup VALUES (1)
+
+# unquoted LOOKUP matches lookup (case-insensitive)
+query I
+SELECT id FROM main.LOOKUP
+----
+1
+
+statement ok
+DROP TABLE main.lookup
+
+
+# --- cleanup ---
+
+statement ok
+DROP TABLE IF EXISTS s1.tbl
+
+statement ok
+DROP TABLE IF EXISTS s1."MyTable"
+
+statement ok
+DROP TABLE IF EXISTS main."CaseColumns"
+
+statement ok
+DROP TABLE IF EXISTS "S2".data
+
+statement ok
+DROP TABLE IF EXISTS main.cross_name
+
+statement ok
+DROP TABLE IF EXISTS s1.cross_name
+
+statement ok
+DROP SCHEMA IF EXISTS s1
+
+statement ok
+DROP SCHEMA IF EXISTS "S2"

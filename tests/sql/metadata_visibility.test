@@ -31,3 +31,94 @@ DROP VIEW metadata_sql_view
 
 statement ok
 DROP TABLE metadata_sql_table
+
+
+# --- temp table visibility ---
+
+statement ok
+DROP TABLE IF EXISTS meta_temp_tbl
+
+statement ok
+CREATE TEMP TABLE meta_temp_tbl (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO meta_temp_tbl VALUES (1, 'temp_one'), (2, 'temp_two')
+
+query II
+SELECT id, val FROM meta_temp_tbl ORDER BY id
+----
+1	temp_one
+2	temp_two
+
+# temp table should appear in information_schema with type LOCAL TEMPORARY.
+# table_schema is version-dependent ('temp' in newer DuckDB, 'main' in older),
+# so assert it is one of the known values instead of hard-coding which one.
+query TTT
+SELECT table_name, table_type, table_schema IN ('temp', 'main') AS schema_ok
+FROM information_schema.tables
+WHERE table_name = 'meta_temp_tbl'
+  AND table_type = 'LOCAL TEMPORARY'
+ORDER BY table_name
+----
+meta_temp_tbl	LOCAL TEMPORARY	true
+
+
+# --- same-name temp and permanent tables ---
+
+statement ok
+DROP TABLE IF EXISTS meta_dual
+
+statement ok
+CREATE TABLE meta_dual (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO meta_dual VALUES (10, 'perm')
+
+statement ok
+CREATE TEMP TABLE meta_dual (id INTEGER, val VARCHAR)
+
+statement ok
+INSERT INTO meta_dual VALUES (20, 'temp')
+
+# both temp and permanent should appear in information_schema
+query TT
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_name = 'meta_dual'
+ORDER BY table_type
+----
+meta_dual	BASE TABLE
+meta_dual	LOCAL TEMPORARY
+
+# unqualified SELECT resolves to temp (shadows permanent)
+query II
+SELECT id, val FROM meta_dual ORDER BY id
+----
+20	temp
+
+# drop temp table (unqualified DROP resolves to temp via shadowing)
+statement ok
+DROP TABLE IF EXISTS meta_dual
+
+# permanent table still intact with original data
+query II
+SELECT id, val FROM meta_dual ORDER BY id
+----
+10	perm
+
+# only BASE TABLE remains in information_schema
+query TT
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_name = 'meta_dual'
+----
+meta_dual	BASE TABLE
+
+
+# --- cleanup ---
+
+statement ok
+DROP TABLE IF EXISTS meta_temp_tbl
+
+statement ok
+DROP TABLE IF EXISTS meta_dual
