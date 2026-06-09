@@ -106,6 +106,34 @@ impl ServerConfig {
                 bail!("SWANLAKE_CHECKPOINT_POLL_SECONDS must be greater than 0");
             }
         }
+
+        if let Some(history) = self.metrics_history_size {
+            if history > 10_000 {
+                bail!("SWANLAKE_METRICS_HISTORY_SIZE must be <= 10000 to prevent excessive memory usage");
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metrics_history_size_at_upper_bound_is_accepted() {
+        let mut config = ServerConfig::default();
+        config.metrics_history_size = Some(10_000);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn metrics_history_size_above_upper_bound_is_rejected() {
+        let mut config = ServerConfig::default();
+        config.metrics_history_size = Some(10_001);
+        let err = config
+            .validate()
+            .expect_err("history size above 10000 must be rejected");
+        assert!(err.to_string().contains("SWANLAKE_METRICS_HISTORY_SIZE"));
     }
 }

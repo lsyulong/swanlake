@@ -36,7 +36,7 @@ and boolean flags accept `true/false` (case-insensitive).
 | `SWANLAKE_STATUS_PORT` | Status server port | `4215` |
 | `SWANLAKE_STATUS_PATH_PREFIX` | Path prefix for status endpoints (e.g., `/admin` results in `/admin/` and `/admin/status.json`) | _(empty)_ |
 | `SWANLAKE_METRICS_SLOW_QUERY_THRESHOLD_MS` | Slow query threshold (ms) used for tagging slow queries | `5000` |
-| `SWANLAKE_METRICS_HISTORY_SIZE` | Number of latency/error/slow-query entries retained | `200` |
+| `SWANLAKE_METRICS_HISTORY_SIZE` | Number of latency/error/slow-query entries retained. Valid range: `1`–`10000` (values above `10000` are rejected at startup to prevent excessive memory usage; `0` falls back to the default `200`) | `200` |
 
 
 ## DuckLake / DuckDB Initialization
@@ -93,3 +93,8 @@ Notes:
 
 `ServerConfig::validate()` currently performs only lightweight checks; the remaining options are
 validated as they are consumed (e.g. parsing socket addresses or attaching schemas).
+
+Checks performed at startup:
+- `SWANLAKE_CHECKPOINT_INTERVAL_HOURS` must be greater than `0`.
+- `SWANLAKE_CHECKPOINT_POLL_SECONDS` must be greater than `0`.
+- `SWANLAKE_METRICS_HISTORY_SIZE` must be `10000` or less (larger values are rejected to prevent excessive memory usage).
