@@ -62,7 +62,9 @@ async fn main() -> Result<()> {
         config.session_id_mode.clone(),
     );
 
-    status::spawn_status_server(&config, metrics, registry.clone())?;
+    // Receiver fires if the status server fails at runtime (after a successful
+    // bind); bind failures are already fatal via `?`.
+    let status_failure_rx = status::spawn_status_server(&config, metrics, registry.clone()).await?;
 
     // Set up gRPC health service
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
@@ -112,14 +114,38 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(());
     });
 
+    // Resolves with an error if the status server dies at runtime; pending
+    // forever when the status server is disabled.
+    let status_failed = async {
+        match status_failure_rx {
+            Some(rx) => match rx.await {
+                Ok(err) => err,
+                // Sender dropped without a message: the status task panicked.
+                Err(_) => anyhow::anyhow!("status server task terminated unexpectedly"),
+            },
+            None => std::future::pending().await,
+        }
+    };
+
+    let mut fatal_err: Option<anyhow::Error> = None;
     Server::builder()
         .add_service(health_service)
         .add_service(arrow_flight::flight_service_server::FlightServiceServer::new(flight_service))
         .serve_with_shutdown(addr, async {
-            shutdown_rx.await.ok();
+            tokio::select! {
+                _ = shutdown_rx => {}
+                err = status_failed => {
+                    tracing::error!(%err, "status server failed at runtime, shutting down");
+                    fatal_err = Some(err);
+                }
+            }
         })
         .await
         .context("Flight SQL server terminated unexpectedly")?;
+
+    if let Some(err) = fatal_err {
+        return Err(err.context("shutting down: status/health endpoints became unavailable"));
+    }
 
     info!("server shutdown complete");
     Ok(())

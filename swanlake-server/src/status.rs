@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::{extract::State, response::Html, routing::get, Json, Router};
 use serde::Serialize;
+use tokio::sync::oneshot;
 
 use swanlake_core::config::ServerConfig;
 use swanlake_core::metrics::{Metrics, MetricsSnapshot};
@@ -22,13 +23,20 @@ struct StatusPayload {
     sessions: SessionRegistrySnapshot,
 }
 
-pub fn spawn_status_server(
+/// Spawns the status HTTP server.
+///
+/// Returns `Ok(None)` when the status server is disabled. When enabled,
+/// waits for the listener to bind (bind failure is fatal and returned as
+/// an error), then returns `Ok(Some(receiver))`. The receiver fires if the
+/// status server later fails at runtime, so the caller can react (e.g.
+/// shut down) instead of silently losing health/metrics endpoints.
+pub async fn spawn_status_server(
     config: &ServerConfig,
     metrics: Arc<Metrics>,
     registry: Arc<SessionRegistry>,
-) -> Result<()> {
+) -> Result<Option<oneshot::Receiver<anyhow::Error>>> {
     if !config.status_enabled {
-        return Ok(());
+        return Ok(None);
     }
 
     let addr: SocketAddr = format!("{}:{}", config.status_host, config.status_port)
@@ -46,21 +54,40 @@ pub fn spawn_status_server(
         .route("/healthz", get(healthz))
         .with_state(state);
 
+    let (bind_tx, bind_rx) = oneshot::channel();
+    let (failure_tx, failure_rx) = oneshot::channel();
+
     tokio::spawn(async move {
         match tokio::net::TcpListener::bind(addr).await {
             Ok(listener) => {
-                if let Err(err) = axum::serve(listener, app).await {
-                    tracing::error!(%err, "status server failed");
+                // Notify caller that bind succeeded before entering serve loop
+                let _ = bind_tx.send(Ok(()));
+                match axum::serve(listener, app).await {
+                    Ok(()) => {
+                        // axum::serve normally runs forever; exiting is abnormal
+                        tracing::error!("status server exited unexpectedly");
+                        let _ = failure_tx.send(anyhow!("status server exited unexpectedly"));
+                    }
+                    Err(err) => {
+                        tracing::error!(%err, "status server failed");
+                        let _ = failure_tx.send(anyhow!("status server failed: {err}"));
+                    }
                 }
             }
             Err(err) => {
-                tracing::error!(%err, "status server bind failed");
+                let _ = bind_tx.send(Err(anyhow!("status server bind failed: {err}")));
             }
         }
     });
 
-    tracing::info!(%addr, "status server listening");
-    Ok(())
+    match bind_rx.await {
+        Ok(Ok(())) => {
+            tracing::info!(%addr, "status server listening");
+            Ok(Some(failure_rx))
+        }
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(anyhow!("status server task panicked before binding")),
+    }
 }
 
 async fn status_page() -> Html<&'static str> {
@@ -150,8 +177,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn spawn_status_server_is_noop_when_disabled() -> Result<()> {
+    #[tokio::test]
+    async fn spawn_status_server_is_noop_when_disabled() -> Result<()> {
         let config = ServerConfig {
             status_enabled: false,
             status_host: "not-a-valid-host:".to_string(),
@@ -159,12 +186,16 @@ mod tests {
         };
         let metrics = Arc::new(Metrics::new(32, 8));
         let registry = build_registry(2, 60)?;
-        spawn_status_server(&config, metrics, registry)?;
+        let handle = spawn_status_server(&config, metrics, registry).await?;
+        assert!(
+            handle.is_none(),
+            "disabled status server should return None"
+        );
         Ok(())
     }
 
-    #[test]
-    fn spawn_status_server_validates_bind_address_when_enabled() -> Result<()> {
+    #[tokio::test]
+    async fn spawn_status_server_validates_bind_address_when_enabled() -> Result<()> {
         let config = ServerConfig {
             status_enabled: true,
             status_host: "invalid host".to_string(),
@@ -174,6 +205,7 @@ mod tests {
         let metrics = Arc::new(Metrics::new(32, 8));
         let registry = build_registry(2, 60)?;
         let err = spawn_status_server(&config, metrics, registry)
+            .await
             .err()
             .ok_or_else(|| anyhow!("expected invalid bind address error"))?;
         assert!(err
@@ -203,8 +235,8 @@ mod tests {
 
         Ok(())
     }
-    #[test]
-    fn status_server_config_changes() -> Result<()> {
+    #[tokio::test]
+    async fn status_server_config_changes() -> Result<()> {
         // Test with disabled status server
         let config_disabled = ServerConfig {
             status_enabled: false,
@@ -215,7 +247,12 @@ mod tests {
         let registry = build_registry(2, 60)?;
 
         //should return early without error when disabled
-        spawn_status_server(&config_disabled, metrics.clone(), registry.clone())?;
+        let handle =
+            spawn_status_server(&config_disabled, metrics.clone(), registry.clone()).await?;
+        assert!(
+            handle.is_none(),
+            "disabled status server should return None"
+        );
 
         // Test with enabled but invalid config
         let config_invalid = ServerConfig {
@@ -226,7 +263,7 @@ mod tests {
         };
 
         // Should return error for invalid bind address
-        let result = spawn_status_server(&config_invalid, metrics, registry);
+        let result = spawn_status_server(&config_invalid, metrics, registry).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
