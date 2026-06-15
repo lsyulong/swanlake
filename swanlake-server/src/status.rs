@@ -62,20 +62,13 @@ pub async fn spawn_status_server(
             Ok(listener) => {
                 // Notify caller that bind succeeded before entering serve loop
                 let _ = bind_tx.send(Ok(()));
-                match axum::serve(listener, app).await {
-                    Ok(()) => {
-                        // axum::serve normally runs forever; exiting is abnormal
-                        tracing::error!("status server exited unexpectedly");
-                        let _ = failure_tx.send(anyhow!("status server exited unexpectedly"));
-                    }
-                    Err(err) => {
-                        tracing::error!(%err, "status server failed");
-                        let _ = failure_tx.send(anyhow!("status server failed: {err}"));
-                    }
-                }
+                // `axum::serve` normally runs forever; any return is abnormal.
+                let outcome = serve_outcome(axum::serve(listener, app).await);
+                tracing::error!(error = %outcome, "status server stopped serving");
+                let _ = failure_tx.send(outcome);
             }
             Err(err) => {
-                let _ = bind_tx.send(Err(anyhow!("status server bind failed: {err}")));
+                let _ = bind_tx.send(Err(bind_failure(err)));
             }
         }
     });
@@ -119,6 +112,20 @@ fn normalize_prefix(prefix: &str) -> String {
     } else {
         format!("/{trimmed}")
     }
+}
+
+/// Builds the fatal error describing why the status `serve` loop ended.
+/// `axum::serve` normally runs forever, so both arms are abnormal.
+fn serve_outcome(result: std::io::Result<()>) -> anyhow::Error {
+    match result {
+        Ok(()) => anyhow!("status server exited unexpectedly"),
+        Err(err) => anyhow!("status server failed: {err}"),
+    }
+}
+
+/// Builds the fatal error returned when the listener fails to bind.
+fn bind_failure(err: std::io::Error) -> anyhow::Error {
+    anyhow!("status server bind failed: {err}")
 }
 
 const STATUS_PAGE: &str = include_str!("status.html");
@@ -291,6 +298,48 @@ mod tests {
         assert_eq!(payload.sessions.session_timeout_seconds, 600);
         assert!(payload.sessions.oldest_idle_ms < 1000);
         assert!(payload.sessions.average_idle_ms < 1000);
+
+        Ok(())
+    }
+
+    #[test]
+    fn serve_outcome_maps_both_arms() {
+        let exited: std::io::Result<()> = std::result::Result::Ok(());
+        let exited_msg = serve_outcome(exited).to_string();
+        assert!(exited_msg.contains("exited unexpectedly"));
+
+        let failed: std::io::Result<()> = std::result::Result::Err(std::io::Error::other("boom"));
+        let failed_msg = serve_outcome(failed).to_string();
+        assert!(failed_msg.contains("status server failed"));
+    }
+
+    #[test]
+    fn bind_failure_describes_error() {
+        let msg = bind_failure(std::io::Error::other("in use")).to_string();
+        assert!(msg.contains("status server bind failed"));
+    }
+
+    #[tokio::test]
+    async fn spawn_status_server_reports_bind_conflict() -> Result<()> {
+        // Hold a port open so the status server's listener bind fails.
+        let blocker = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let port = blocker.local_addr()?.port();
+
+        let config = ServerConfig {
+            status_enabled: true,
+            status_host: "127.0.0.1".to_string(),
+            status_port: port,
+            ..ServerConfig::default()
+        };
+        let metrics = Arc::new(Metrics::new(32, 8));
+        let registry = build_registry(2, 60)?;
+
+        let err = spawn_status_server(&config, metrics, registry)
+            .await
+            .err()
+            .ok_or_else(|| anyhow!("expected bind conflict error"))?;
+        let msg = err.to_string();
+        assert!(msg.contains("status server bind failed"));
 
         Ok(())
     }
